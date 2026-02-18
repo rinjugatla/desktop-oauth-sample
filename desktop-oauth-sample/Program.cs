@@ -19,21 +19,18 @@ class Program
         // そのため、動的に生成した「Code Verifier」とそれをハッシュ化した「Code Challenge」を使って、
         // 認可リクエストを行ったクライアントと、トークンリクエストを行うクライアントが同一であることを証明します。
 
-        string codeVerifier = OAuthHelper.GenerateCodeVerifier();
-        string codeChallenge = OAuthHelper.GenerateCodeChallenge(codeVerifier);
-
-        Console.WriteLine($"[PKCE] Code Verifier (生成): {codeVerifier}");
-        Console.WriteLine($"[PKCE] Code Challenge (S256ハッシュ): {codeChallenge}");
+        var helper = new OAuthHelper();
+        Console.WriteLine($"[PKCE] Code Verifier (生成): {helper.CodeVerifier}");
+        Console.WriteLine($"[PKCE] Code Challenge (S256ハッシュ): {helper.CodeChallenge}");
 
         // 2. リダイレクトURI用にローカルの空きポートを探してHTTPリスナーを作成
         // 解説:
         // 認証後のコールバックを受け取るために、一時的なローカルサーバーを立ち上げます。
         // ポートを0に指定してTcpListenerを開始すると、OSが空いているポートを割り当ててくれます。
-        string redirectUri = OAuthHelper.GenerateRedirectUri();
-        Console.WriteLine($"[Redirect URI] {redirectUri}");
+        Console.WriteLine($"[Redirect URI] {helper.RedirectUri}");
         
         using var httpListener = new HttpListener();
-        httpListener.Prefixes.Add(redirectUri);
+        httpListener.Prefixes.Add(helper.RedirectUri);
         httpListener.Start();
 
         // 3. 認可リクエストURLの作成
@@ -43,7 +40,7 @@ class Program
 
         // System.Web.HttpUtilityを使わずに手動でクエリパラメータを構築
         // (コンソールアプリで追加パッケージなしで動作させるため)
-        string authorizationUrl = OAuthHelper.GenerateAuthorizationUrl(codeChallenge, redirectUri);
+        string authorizationUrl = helper.GenerateAuthorizationUrl();
         Console.WriteLine("ブラウザを起動して認証を行います...");
 
         // ブラウザを開く
@@ -85,7 +82,7 @@ class Program
         // 一致すれば、正当なクライアントからのリクエストであると判断されます。
 
         Console.WriteLine("トークンをリクエストしています...");
-        await OAuthHelper.ExchangeCodeForTokenAsync(authorizationCode, codeVerifier, redirectUri);
+        await helper.ExchangeCodeForTokenAsync(authorizationCode);
 
         Console.WriteLine("処理が完了しました。何かキーを押すと終了します。");
         Console.ReadKey();

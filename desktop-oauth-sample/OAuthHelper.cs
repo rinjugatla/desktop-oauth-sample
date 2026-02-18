@@ -7,18 +7,21 @@ using System.Text.Json;
 
 namespace desktop_oauth_sample
 {
-    internal static class OAuthHelper
+    internal class OAuthHelper
     {
-        private static string ClientId { get; set; }
-        private static string ProjectId { get; set; }
-        private static string AuthUri { get; set; }
-        private static string TokenUri { get; set; }
-        private static string AuthProviderX509CertUrl { get; set; }
-        private static string ClientSecret { get; set; }
-        private static List<string> RedirectUris { get; set; } = new List<string>();
-        public static string Scope => "openid email profile";
+        private string ClientId { get; set; }
+        private string ProjectId { get; set; }
+        private string AuthUri { get; set; }
+        private string TokenUri { get; set; }
+        private string AuthProviderX509CertUrl { get; set; }
+        private string ClientSecret { get; set; }
+        private List<string> RedirectUris { get; set; } = new List<string>();
+        public string Scope => "openid email profile";
+        public string RedirectUri { get; private set; }
+        public string CodeVerifier { get; private set; }
+        public string CodeChallenge { get; private set; }
 
-        static OAuthHelper()
+        public OAuthHelper()
         {
             var config = new ConfigurationBuilder()
                 .AddUserSecrets<Program>() // ユーザーシークレットを読み込む
@@ -35,12 +38,16 @@ namespace desktop_oauth_sample
                 .Select(x => x.Value)
                 .Where(x => !string.IsNullOrEmpty(x))
                 .ToList();
+
+            RedirectUri = GenerateRedirectUri();
+            CodeVerifier = GenerateCodeVerifier();
+            CodeChallenge = GenerateCodeChallenge(CodeVerifier);
         }
 
         /// <summary>
         /// ランダムなローカルポートを使用してリダイレクトURIを生成
         /// </summary>
-        public static string GenerateRedirectUri()
+        private string GenerateRedirectUri()
         {
             var url = $"http://127.0.0.1:{GetRandomUnusedPort()}/";
             return url;
@@ -49,7 +56,7 @@ namespace desktop_oauth_sample
         /// <summary>
         /// Code Verifierを生成する (43〜128文字のランダムな文字列)
         /// </summary>
-        public static string GenerateCodeVerifier()
+        private string GenerateCodeVerifier()
         {
             const int length = 128; // Code Verifierの長さ (43-128文字)
             using var rng = RandomNumberGenerator.Create();
@@ -61,7 +68,7 @@ namespace desktop_oauth_sample
         /// <summary>
         /// Code Challengeを生成する (VerifierをSHA256ハッシュし、Base64Urlエンコード)
         /// </summary>
-        public static string GenerateCodeChallenge(string codeVerifier)
+        private string GenerateCodeChallenge(string codeVerifier)
         {
             using var sha256 = SHA256.Create();
             byte[] challengeBytes = sha256.ComputeHash(Encoding.ASCII.GetBytes(codeVerifier));
@@ -72,7 +79,7 @@ namespace desktop_oauth_sample
         /// Base64URLエンコード処理
         /// 解説: 通常のBase64に含まれる '+', '/', '=' はURLで特別な意味を持つため置換・削除が必要
         /// </summary>
-        private static string Base64UrlEncode(byte[] input)
+        private string Base64UrlEncode(byte[] input)
         {
             string base64 = Convert.ToBase64String(input);
             // Base64URL仕様への変換:
@@ -85,7 +92,7 @@ namespace desktop_oauth_sample
         /// <summary>
         /// 空いているローカルポートを取得する
         /// </summary>
-        private static int GetRandomUnusedPort()
+        private int GetRandomUnusedPort()
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -95,18 +102,16 @@ namespace desktop_oauth_sample
         }
 
         /// <summary>認証URLを生成</summary>
-        /// <param name="codeChallenge">PKCEのコードチャレンジ</param>
-        /// <param name="redirectUri">リダイレクトURI(ポート番号指定を含む)</param>
         /// <returns>認証URL</returns>
-        public static string GenerateAuthorizationUrl(string codeChallenge, string redirectUri)
+        public string GenerateAuthorizationUrl()
         {
             var queryParams = new Dictionary<string, string>
             {
                 { "response_type", "code" },
                 { "client_id", ClientId },
-                { "redirect_uri", redirectUri },
+                { "redirect_uri", RedirectUri },
                 { "scope", Scope },
-                { "code_challenge", codeChallenge },
+                { "code_challenge", CodeChallenge },
                 { "code_challenge_method", "S256" }
             };
 
@@ -118,12 +123,12 @@ namespace desktop_oauth_sample
         /// <summary>
         /// 認可コードを使ってアクセストークンを取得する
         /// </summary>
-        public static async Task ExchangeCodeForTokenAsync(string code, string codeVerifier, string redirectUri)
+        public async Task ExchangeCodeForTokenAsync(string code)
         {
             try
             {
                 using var httpClient = new HttpClient();
-                var requestData = GenerateTokenRequestData(code, codeVerifier, redirectUri);
+                var requestData = GenerateTokenRequestData(code, CodeVerifier, RedirectUri);
                 var response = await httpClient.PostAsync(TokenUri, requestData);
                 response.EnsureSuccessStatusCode();
                 var responseContent = await response.Content.ReadAsStringAsync();
@@ -165,7 +170,7 @@ namespace desktop_oauth_sample
         /// <param name="codeVerifier">PKCEのコードベリファイア</param>
         /// <param name="redirectUri">リダイレクトURI</param>
         /// <returns>アクセストークン取得用のリクエストデータ</returns>
-        private static FormUrlEncodedContent GenerateTokenRequestData(string authorizationCode, string codeVerifier, string redirectUri)
+        private FormUrlEncodedContent GenerateTokenRequestData(string authorizationCode, string codeVerifier, string redirectUri)
         {
             var requestData = new Dictionary<string, string>
             {
