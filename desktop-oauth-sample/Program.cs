@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 // using System.Web; // 不要
 
 
@@ -15,22 +16,6 @@ class Program
     // ==========================================
     // 本番環境では、これらの値を環境変数や安全なキーストアから読み込むことが推奨されます。
     // 今回は学習用サンプルとして定数に定義します。
-    
-    // クライアントID (GCP Consoleで作成したOAuth 2.0 クライアントID)
-    const string ClientId = "YOUR_CLIENT_ID";
-    
-    // クライアントシークレット (デスクトップアプリの場合、シークレットの安全な保管は難しいため、
-    // PKCEを使用することでセキュリティを高めますが、プロバイダーによっては必要な場合があります)
-    const string ClientSecret = "YOUR_CLIENT_SECRET"; 
-
-    // 認可エンドポイント
-    const string AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
-    
-    // トークンエンドポイント
-    const string TokenEndpoint = "https://oauth2.googleapis.com/token";
-
-    // スコープ (必要な権限を指定します。例: email profile openid)
-    const string Scope = "openid email profile";
 
     static async Task Main(string[] args)
     {
@@ -45,7 +30,7 @@ class Program
         // デスクトップアプリのようなパブリッククライアントでは、Client Secretを安全に保つことができません。
         // そのため、動的に生成した「Code Verifier」とそれをハッシュ化した「Code Challenge」を使って、
         // 認可リクエストを行ったクライアントと、トークンリクエストを行うクライアントが同一であることを証明します。
-        
+
         string codeVerifier = GenerateCodeVerifier();
         string codeChallenge = GenerateCodeChallenge(codeVerifier);
 
@@ -70,18 +55,19 @@ class Program
 
         // System.Web.HttpUtilityを使わずに手動でクエリパラメータを構築
         // (コンソールアプリで追加パッケージなしで動作させるため)
+        var config = new OAuthConfig();
         var queryParams = new Dictionary<string, string>
         {
             { "response_type", "code" },
-            { "client_id", ClientId },
+            { "client_id", config.ClientId },
             { "redirect_uri", redirectUri },
-            { "scope", Scope },
+            { "scope", config.Scope },
             { "code_challenge", codeChallenge },
             { "code_challenge_method", "S256" }
         };
 
         var queryString = string.Join("&", queryParams.Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value)}"));
-        string authorizationUrl = $"{AuthorizationEndpoint}?{queryString}";
+        string authorizationUrl = $"{config.AuthUri}?{queryString}";
         
         Console.WriteLine("ブラウザを起動して認証を行います...");
 
@@ -204,20 +190,21 @@ class Program
     {
         using var client = new HttpClient();
         
+        var config = new OAuthConfig();
         var requestBody = new FormUrlEncodedContent(new[]
         {
             new KeyValuePair<string, string>("code", code),
             new KeyValuePair<string, string>("redirect_uri", redirectUri),
-            new KeyValuePair<string, string>("client_id", ClientId),
+            new KeyValuePair<string, string>("client_id", config.ClientId),
             new KeyValuePair<string, string>("code_verifier", codeVerifier), // PKCEで重要！
-            new KeyValuePair<string, string>("client_secret", ClientSecret), // 必要に応じて
-            new KeyValuePair<string, string>("scope", ""),
+            new KeyValuePair<string, string>("client_secret", config.ClientSecret), // 必要に応じて
+            new KeyValuePair<string, string>("scope", config.Scope),
             new KeyValuePair<string, string>("grant_type", "authorization_code")
         });
 
         try
         {
-            var response = await client.PostAsync(TokenEndpoint, requestBody);
+            var response = await client.PostAsync(config.TokenUri, requestBody);
             var responseContent = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
@@ -251,3 +238,33 @@ class Program
     }
 }
 
+class OAuthConfig
+{
+    public string ClientId { get; private set; } = string.Empty;
+    public string ProjectId { get; private set; } = string.Empty;
+    public string AuthUri { get; private set; } = string.Empty;
+    public string TokenUri { get; private set; } = string.Empty;
+    public string AuthProviderX509CertUrl { get; private set; } = string.Empty;
+    public string ClientSecret { get; private set; } = string.Empty;
+    public List<string> RedirectUris { get; private set; } = new List<string>();
+    public string Scope => "openid email profile";
+
+    public OAuthConfig()
+    {
+        var config = new ConfigurationBuilder()
+            .AddUserSecrets<Program>() // ユーザーシークレットを読み込む
+            .Build();
+
+        ClientId = config["installed:client_id"];
+        ProjectId = config["installed:project_id"];
+        AuthUri = config["installed:auth_uri"];
+        TokenUri = config["installed:token_uri"];
+        AuthProviderX509CertUrl = config["installed:auth_provider_x509_cert_url"];
+        ClientSecret = config["installed:client_secret"];
+        RedirectUris = config.GetSection("installed:redirect_uris")
+            .GetChildren()
+            .Select(x => x.Value)
+            .Where(x => !string.IsNullOrEmpty(x))
+            .ToList();
+    }
+}
