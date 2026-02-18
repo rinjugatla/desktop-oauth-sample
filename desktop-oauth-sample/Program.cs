@@ -1,22 +1,10 @@
-﻿using System;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-// using System.Web; // 不要
-
+using desktop_oauth_sample;
 
 class Program
 {
-    // ==========================================
-    // OAuth 2.0 設定 (GCPなどのプロバイダーから取得した情報)
-    // ==========================================
-    // 本番環境では、これらの値を環境変数や安全なキーストアから読み込むことが推奨されます。
-    // 今回は学習用サンプルとして定数に定義します。
-
     static async Task Main(string[] args)
     {
         Console.WriteLine("==================================================");
@@ -31,8 +19,8 @@ class Program
         // そのため、動的に生成した「Code Verifier」とそれをハッシュ化した「Code Challenge」を使って、
         // 認可リクエストを行ったクライアントと、トークンリクエストを行うクライアントが同一であることを証明します。
 
-        string codeVerifier = GenerateCodeVerifier();
-        string codeChallenge = GenerateCodeChallenge(codeVerifier);
+        string codeVerifier = OAuthHelper.GenerateCodeVerifier();
+        string codeChallenge = OAuthHelper.GenerateCodeChallenge(codeVerifier);
 
         Console.WriteLine($"[PKCE] Code Verifier (生成): {codeVerifier}");
         Console.WriteLine($"[PKCE] Code Challenge (S256ハッシュ): {codeChallenge}");
@@ -41,7 +29,7 @@ class Program
         // 解説:
         // 認証後のコールバックを受け取るために、一時的なローカルサーバーを立ち上げます。
         // ポートを0に指定してTcpListenerを開始すると、OSが空いているポートを割り当ててくれます。
-        string redirectUri = $"http://127.0.0.1:{GetRandomUnusedPort()}/";
+        string redirectUri = OAuthHelper.GenerateRedirectUri();
         Console.WriteLine($"[Redirect URI] {redirectUri}");
         
         using var httpListener = new HttpListener();
@@ -55,20 +43,7 @@ class Program
 
         // System.Web.HttpUtilityを使わずに手動でクエリパラメータを構築
         // (コンソールアプリで追加パッケージなしで動作させるため)
-        var config = new OAuthConfig();
-        var queryParams = new Dictionary<string, string>
-        {
-            { "response_type", "code" },
-            { "client_id", config.ClientId },
-            { "redirect_uri", redirectUri },
-            { "scope", config.Scope },
-            { "code_challenge", codeChallenge },
-            { "code_challenge_method", "S256" }
-        };
-
-        var queryString = string.Join("&", queryParams.Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value)}"));
-        string authorizationUrl = $"{config.AuthUri}?{queryString}";
-        
+        string authorizationUrl = OAuthHelper.GenerateAuthorizationUrl(codeChallenge, redirectUri);
         Console.WriteLine("ブラウザを起動して認証を行います...");
 
         // ブラウザを開く
@@ -110,59 +85,10 @@ class Program
         // 一致すれば、正当なクライアントからのリクエストであると判断されます。
 
         Console.WriteLine("トークンをリクエストしています...");
-        await ExchangeCodeForTokenAsync(authorizationCode, codeVerifier, redirectUri);
+        await OAuthHelper.ExchangeCodeForTokenAsync(authorizationCode, codeVerifier, redirectUri);
 
         Console.WriteLine("処理が完了しました。何かキーを押すと終了します。");
         Console.ReadKey();
-    }
-
-    /// <summary>
-    /// Code Verifierを生成する (43〜128文字のランダムな文字列)
-    /// </summary>
-    static string GenerateCodeVerifier()
-    {
-        // 32バイトのランダムデータを生成 (Base64urlエンコードすると約43文字になる)
-        // PKCEの仕様では最低43文字必要
-        using var rng = RandomNumberGenerator.Create();
-        byte[] bytes = new byte[32];
-        rng.GetBytes(bytes);
-        return Base64UrlEncode(bytes);
-    }
-
-    /// <summary>
-    /// Code Challengeを生成する (VerifierをSHA256ハッシュし、Base64Urlエンコード)
-    /// </summary>
-    static string GenerateCodeChallenge(string codeVerifier)
-    {
-        using var sha256 = SHA256.Create();
-        byte[] challengeBytes = sha256.ComputeHash(Encoding.ASCII.GetBytes(codeVerifier));
-        return Base64UrlEncode(challengeBytes);
-    }
-
-    /// <summary>
-    /// Base64URLエンコード処理
-    /// 解説: 通常のBase64に含まれる '+', '/', '=' はURLで特別な意味を持つため置換・削除が必要
-    /// </summary>
-    static string Base64UrlEncode(byte[] input)
-    {
-        string base64 = Convert.ToBase64String(input);
-        // Base64URL仕様への変換:
-        // '+' -> '-'
-        // '/' -> '_'
-        // '=' (パディング) -> 削除
-        return base64.Replace("+", "-").Replace("/", "_").Replace("=", "");
-    }
-
-    /// <summary>
-    /// 空いているローカルポートを取得する
-    /// </summary>
-    static int GetRandomUnusedPort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     /// <summary>
@@ -181,90 +107,5 @@ class Program
             Console.WriteLine(url);
             Console.WriteLine($"エラー詳細: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// 認可コードを使ってアクセストークンを取得する
-    /// </summary>
-    static async Task ExchangeCodeForTokenAsync(string code, string codeVerifier, string redirectUri)
-    {
-        using var client = new HttpClient();
-        
-        var config = new OAuthConfig();
-        var requestBody = new FormUrlEncodedContent(new[]
-        {
-            new KeyValuePair<string, string>("code", code),
-            new KeyValuePair<string, string>("redirect_uri", redirectUri),
-            new KeyValuePair<string, string>("client_id", config.ClientId),
-            new KeyValuePair<string, string>("code_verifier", codeVerifier), // PKCEで重要！
-            new KeyValuePair<string, string>("client_secret", config.ClientSecret), // 必要に応じて
-            new KeyValuePair<string, string>("scope", config.Scope),
-            new KeyValuePair<string, string>("grant_type", "authorization_code")
-        });
-
-        try
-        {
-            var response = await client.PostAsync(config.TokenUri, requestBody);
-            var responseContent = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
-            {
-                Console.WriteLine("--------------------------------------------------");
-                Console.WriteLine("トークン取得に成功しました！");
-                
-                // JSONを整形して表示
-                try 
-                {
-                    using var doc = JsonDocument.Parse(responseContent);
-                    var formattedJson = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
-                    Console.WriteLine(formattedJson);
-                }
-                catch
-                {
-                    Console.WriteLine(responseContent);
-                }
-                Console.WriteLine("--------------------------------------------------");
-            }
-            else
-            {
-                Console.WriteLine($"トークン取得エラー: {response.StatusCode}");
-                Console.WriteLine(responseContent);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"通信エラーが発生しました: {ex.Message}");
-        }
-    }
-}
-
-class OAuthConfig
-{
-    public string ClientId { get; private set; } = string.Empty;
-    public string ProjectId { get; private set; } = string.Empty;
-    public string AuthUri { get; private set; } = string.Empty;
-    public string TokenUri { get; private set; } = string.Empty;
-    public string AuthProviderX509CertUrl { get; private set; } = string.Empty;
-    public string ClientSecret { get; private set; } = string.Empty;
-    public List<string> RedirectUris { get; private set; } = new List<string>();
-    public string Scope => "openid email profile";
-
-    public OAuthConfig()
-    {
-        var config = new ConfigurationBuilder()
-            .AddUserSecrets<Program>() // ユーザーシークレットを読み込む
-            .Build();
-
-        ClientId = config["installed:client_id"];
-        ProjectId = config["installed:project_id"];
-        AuthUri = config["installed:auth_uri"];
-        TokenUri = config["installed:token_uri"];
-        AuthProviderX509CertUrl = config["installed:auth_provider_x509_cert_url"];
-        ClientSecret = config["installed:client_secret"];
-        RedirectUris = config.GetSection("installed:redirect_uris")
-            .GetChildren()
-            .Select(x => x.Value)
-            .Where(x => !string.IsNullOrEmpty(x))
-            .ToList();
     }
 }
