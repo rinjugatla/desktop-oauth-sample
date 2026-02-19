@@ -20,6 +20,7 @@ namespace desktop_oauth_sample
         public string RedirectUri { get; private set; }
         public string CodeVerifier { get; private set; }
         public string CodeChallenge { get; private set; }
+        public string State { get; private set; }
 
         public OAuthHelper()
         {
@@ -42,6 +43,7 @@ namespace desktop_oauth_sample
             RedirectUri = GenerateRedirectUri();
             CodeVerifier = GenerateCodeVerifier();
             CodeChallenge = GenerateCodeChallenge(CodeVerifier);
+            State = GenerateState();
         }
 
         /// <summary>
@@ -59,6 +61,18 @@ namespace desktop_oauth_sample
         private string GenerateCodeVerifier()
         {
             const int length = 128; // Code Verifierの長さ (43-128文字)
+            using var rng = RandomNumberGenerator.Create();
+            byte[] bytes = new byte[length];
+            rng.GetBytes(bytes);
+            return Base64UrlEncode(bytes);
+        }
+
+        /// <summary>
+        /// State パラメータを生成する (CSRF攻撃を防ぐためのランダムな文字列)
+        /// </summary>
+        private string GenerateState()
+        {
+            const int length = 32;
             using var rng = RandomNumberGenerator.Create();
             byte[] bytes = new byte[length];
             rng.GetBytes(bytes);
@@ -112,12 +126,55 @@ namespace desktop_oauth_sample
                 { "redirect_uri", RedirectUri },
                 { "scope", Scope },
                 { "code_challenge", CodeChallenge },
-                { "code_challenge_method", "S256" }
+                { "code_challenge_method", "S256" },
+                { "state", State }
             };
 
             var queryString = string.Join("&", queryParams.Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value)}"));
             string authorizationUrl = $"{AuthUri}?{queryString}";
             return authorizationUrl;
+        }
+
+        /// <summary>
+        /// OAuthコールバックのパラメータを検証する
+        /// </summary>
+        /// <param name="queryString">コールバックのクエリパラメータ</param>
+        /// <param name="authorizationCode">認可コード（出力パラメータ）</param>
+        /// <param name="errorMessage">エラーメッセージ（出力パラメータ）</param>
+        /// <returns>検証が成功した場合はtrue、失敗した場合はfalse</returns>
+        public bool ValidateCallback(System.Collections.Specialized.NameValueCollection queryString, out string? authorizationCode, out string? errorMessage)
+        {
+            authorizationCode = null;
+            errorMessage = null;
+
+            // OAuthエラーのチェック
+            var error = queryString["error"];
+            if (!string.IsNullOrEmpty(error))
+            {
+                var errorDescription = queryString["error_description"];
+                errorMessage = string.IsNullOrEmpty(errorDescription) 
+                    ? $"OAuth エラー: {error}" 
+                    : $"OAuth エラー: {error} - {errorDescription}";
+                return false;
+            }
+
+            // Stateパラメータの検証（CSRF攻撃対策）
+            var receivedState = queryString["state"];
+            if (string.IsNullOrEmpty(receivedState) || receivedState != State)
+            {
+                errorMessage = "State パラメータの検証に失敗しました。CSRF攻撃の可能性があります。";
+                return false;
+            }
+
+            // 認可コードの取得
+            authorizationCode = queryString["code"];
+            if (string.IsNullOrEmpty(authorizationCode))
+            {
+                errorMessage = "認可コードが取得できませんでした。";
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>

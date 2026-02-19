@@ -20,7 +20,6 @@ class Program
         // 認可リクエストを行ったクライアントと、トークンリクエストを行うクライアントが同一であることを証明します。
 
         var helper = new OAuthHelper();
-        Console.WriteLine($"[PKCE] Code Verifier (生成): {helper.CodeVerifier}");
         Console.WriteLine($"[PKCE] Code Challenge (S256ハッシュ): {helper.CodeChallenge}");
 
         // 2. リダイレクトURI用にローカルの空きポートを探してHTTPリスナーを作成
@@ -53,6 +52,22 @@ class Program
         var context = await httpListener.GetContextAsync();
         var response = context.Response;
         
+        // コールバックパラメータの検証
+        if (!helper.ValidateCallback(context.Request.QueryString, out string? authorizationCode, out string? errorMessage))
+        {
+            // エラーメッセージをブラウザに表示
+            string errorResponse = $"<html><body><h2>Authentication failed!</h2><p>{System.Net.WebUtility.HtmlEncode(errorMessage)}</p><p>You can close this tab and return to the application.</p></body></html>";
+            byte[] errorBuffer = Encoding.UTF8.GetBytes(errorResponse);
+            response.ContentLength64 = errorBuffer.Length;
+            var errorOutput = response.OutputStream;
+            await errorOutput.WriteAsync(errorBuffer, 0, errorBuffer.Length);
+            errorOutput.Close();
+            httpListener.Stop();
+            
+            Console.WriteLine($"エラー: {errorMessage}");
+            return;
+        }
+        
         // ブラウザに完了メッセージを表示
         string responseString = "<html><body><h2>Authentication successful!</h2><p>You can close this tab and return to the application.</p></body></html>";
         byte[] buffer = Encoding.UTF8.GetBytes(responseString);
@@ -62,17 +77,7 @@ class Program
         responseOutput.Close();
         httpListener.Stop(); // サーバー停止
 
-        // クエリパラメータから code を抽出
-        // リクエストURL: http://127.0.0.1:xxx/?code=AUTHORIZATION_CODE&...
-        string? authorizationCode = context.Request.QueryString["code"];
-        
-        if (string.IsNullOrEmpty(authorizationCode))
-        {
-            Console.WriteLine("エラー: 認可コードが取得できませんでした。");
-            return;
-        }
-
-        Console.WriteLine($"[Authorization Code] 取得成功: {authorizationCode}");
+        Console.WriteLine("[Authorization Code] 取得成功");
 
         // 5. トークンリクエスト (認可コードとトークンを交換)
         // 解説:
@@ -82,7 +87,7 @@ class Program
         // 一致すれば、正当なクライアントからのリクエストであると判断されます。
 
         Console.WriteLine("トークンをリクエストしています...");
-        await helper.ExchangeCodeForTokenAsync(authorizationCode);
+        await helper.ExchangeCodeForTokenAsync(authorizationCode!);
 
         Console.WriteLine("処理が完了しました。何かキーを押すと終了します。");
         Console.ReadKey();
