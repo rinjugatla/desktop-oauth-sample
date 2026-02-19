@@ -198,9 +198,10 @@ namespace desktop_oauth_sample
                     try
                     {
                         // JSONを整形して表示
-                        using var doc = JsonDocument.Parse(responseContent);
-                        var formattedJson = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
-                        Console.WriteLine(formattedJson);
+                        //using var doc = JsonDocument.Parse(responseContent);
+                        //var formattedJson = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+                        //Console.WriteLine(formattedJson);
+                        Console.WriteLine("トークン情報は機密情報のため表示しません。\n表示が必要な場合は上記コードのコメントを解除してください。");
                     }
                     catch
                     {
