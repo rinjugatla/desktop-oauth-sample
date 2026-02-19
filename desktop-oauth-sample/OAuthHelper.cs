@@ -72,7 +72,7 @@ namespace desktop_oauth_sample
         /// </summary>
         private string GenerateState()
         {
-            const int length = 32;
+            const int length = 32; // 十分なエントロピーを持つ256ビット（32バイト）のランダム値
             using var rng = RandomNumberGenerator.Create();
             byte[] bytes = new byte[length];
             rng.GetBytes(bytes);
@@ -162,7 +162,7 @@ namespace desktop_oauth_sample
             var receivedState = queryString["state"];
             if (string.IsNullOrEmpty(receivedState) || receivedState != State)
             {
-                errorMessage = "State パラメータの検証に失敗しました。CSRF攻撃の可能性があります。";
+                errorMessage = "認証セッションの検証に失敗しました。もう一度お試しください。";
                 return false;
             }
 
